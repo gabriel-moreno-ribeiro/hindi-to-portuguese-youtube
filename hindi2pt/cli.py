@@ -1,7 +1,7 @@
-"""hindi2pt: pega a legenda em hindi de um video do YouTube e salva como SRT.
+"""hindi2pt: pega a legenda em hindi de um video do YouTube, traduz pra pt-BR e salva como SRT.
 
-    hindi2pt "https://www.youtube.com/watch?v=XXXX" -o saida/
-    hindi2pt video.hi.vtt                                  # ou um arquivo local
+    hindi2pt "https://www.youtube.com/watch?v=XXXX" -o saida/ -b google --key ...
+    hindi2pt video.hi.vtt -b googletrans           # ou um arquivo local, com o tradutor de graca
 """
 import argparse
 import os
@@ -10,17 +10,21 @@ import sys
 
 from . import subtitles
 from .fetch import fetch_subtitles, is_url
+from .translate import Translator, make_backend
 
 
-def convert(source, out_dir, log=print):
+def translate_file(source, translator, out_dir, log=print):
     with open(source, encoding="utf-8") as f:
         cues = subtitles.parse(f.read())
+    log(f"{len(cues)} legendas pra traduzir com {translator.backend.name}")
+    texts = translator.translate([c.text for c in cues], progress=lambda d, t: log(f"  {d}/{t}"))
+    translated = [c.copy(text=t) for c, t in zip(cues, texts)]
     stem = re.sub(r"\.(hi|hi-[\w-]+)$", "", os.path.splitext(os.path.basename(source))[0])
-    out = os.path.join(out_dir, stem + ".hi.srt")
+    out = os.path.join(out_dir, stem + ".pt-BR.srt")
     os.makedirs(out_dir, exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
-        f.write(subtitles.to_srt(cues))
-    log(f"{len(cues)} legendas -> {out}")
+        f.write(subtitles.to_srt(translated))
+    log(f"pronto: {len(translated)} legendas -> {out}")
     return out
 
 
@@ -28,10 +32,14 @@ def main(argv=None):
     p = argparse.ArgumentParser(prog="hindi2pt", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("source", help="URL do YouTube ou um arquivo .srt/.vtt")
     p.add_argument("-o", "--out", default="out", help="pasta de saida (padrao: out/)")
+    p.add_argument("-b", "--backend", default="googletrans", help="google (com chave), googletrans (de graca) ou dummy")
+    p.add_argument("--key", default=os.environ.get("GOOGLE_TRANSLATE_KEY"), help="chave da API do Google Cloud Translation")
+    p.add_argument("--batch", type=int, default=40, help="linhas por pedido de traducao")
     args = p.parse_args(argv)
     try:
+        translator = Translator(make_backend(args.backend, args.key), batch_size=args.batch)
         source = fetch_subtitles(args.source, args.out) if is_url(args.source) else args.source
-        convert(source, args.out)
+        translate_file(source, translator, args.out)
     except (RuntimeError, ValueError, OSError) as e:
         print(f"erro: {e}", file=sys.stderr)
         return 1

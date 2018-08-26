@@ -3,10 +3,7 @@ import subprocess
 
 import pytest
 
-from hindi2pt.cli import main
 from hindi2pt.fetch import fetch_subtitles, is_url, video_id
-
-FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 
 
 def test_video_id():
@@ -39,10 +36,3 @@ def test_fetch_calls_youtube_dl_and_finds_the_file(tmpdir):
 
     with pytest.raises(RuntimeError):
         fetch_subtitles("https://youtu.be/nosubs1", str(tmpdir), run=no_subs)
-
-
-def test_cli_converts_a_local_vtt(tmpdir, capsys):
-    assert main([os.path.join(FIXTURES, "sample.hi.vtt"), "-o", str(tmpdir)]) == 0
-    assert "6 legendas" in capsys.readouterr().out
-    assert os.path.exists(os.path.join(str(tmpdir), "sample.hi.srt"))
-    assert main([os.path.join(FIXTURES, "nao-existe.vtt"), "-o", str(tmpdir)]) == 1
