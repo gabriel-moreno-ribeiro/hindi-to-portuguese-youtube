@@ -41,3 +41,12 @@ def test_srt_writer_round_trip():
     assert S.parse(text) == cues
     assert S.parse(S.to_vtt(cues)) == cues
     assert cues[0].copy(text="z") == S.Cue(1.0, 2.5, "z") and cues[0].duration == 1.5
+
+
+def test_rolling_captions_are_deduplicated():
+    cues = S.parse(read("sample.hi.vtt"))
+    flat = S.dedupe_rolling(cues)
+    assert [c.text for c in flat] == ["आज हम बात करेंगे", "एक बहुत खास चीज़ के बारे में।", "चलिए शुरू करते हैं", "यह वीडियो के अंत तक देखिए"]
+    normal = S.normalize(cues)
+    assert normal[1].text.endswith("."), "o danda vira ponto"
+    assert len(normal) == 4

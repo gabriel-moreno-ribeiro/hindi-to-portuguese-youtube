@@ -55,8 +55,10 @@ def test_make_backend():
 def test_cli_translates_a_local_file(tmpdir, capsys):
     assert main([os.path.join(FIXTURES, "sample.hi.vtt"), "-o", str(tmpdir), "-b", "dummy"]) == 0
     out = capsys.readouterr().out
-    assert "pronto: 6 legendas" in out
+    assert "6 cues viraram 4" in out and "pronto: 4 legendas" in out
     with open(os.path.join(str(tmpdir), "sample.pt-BR.srt"), encoding="utf-8") as f:
-        assert f.read().count("[pt]") == 6
+        assert f.read().count("[pt]") == 4
+    assert main([os.path.join(FIXTURES, "sample.hi.vtt"), "-o", str(tmpdir), "-b", "dummy", "--raw"]) == 0
+    assert "pronto: 6 legendas" in capsys.readouterr().out
     assert main([os.path.join(FIXTURES, "sample.hi.vtt"), "-o", str(tmpdir), "-b", "nope"]) == 1
     assert "desconhecido" in capsys.readouterr().err

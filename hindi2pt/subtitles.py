@@ -1,13 +1,15 @@
-"""Arquivos de legenda: leitura e escrita de SRT e WebVTT.
+"""Arquivos de legenda: leitura e escrita de SRT e WebVTT, e a limpeza da legenda automatica.
 
 O YouTube entrega a legenda como WebVTT (o ``youtube-dl --sub-format vtt``).
-O VLC e todo mundo entende SRT. Aqui e a ponte entre os dois.
+A automatica vem com cada linha repetida no cue seguinte (o "rolling caption",
+que rola na tela) e com uma tag de tempo por palavra. ``dedupe_rolling`` tira isso.
 """
 import re
 
 TIME_RE = re.compile(r"(\d+):(\d\d):(\d\d)[.,](\d{1,3})")
 SHORT_TIME_RE = re.compile(r"(\d\d):(\d\d)[.,](\d{1,3})")  # o VTT aceita mm:ss.mmm
 TAG_RE = re.compile(r"<[^>]+>")
+DEVANAGARI_DANDA = "।"  # o "ponto final" do hindi; o tradutor se perde com ele
 
 
 class Cue(object):
@@ -114,3 +116,24 @@ def to_vtt(cues):
     for cue in cues:
         out.append(f"{format_time(cue.start, '.')} --> {format_time(cue.end, '.')}\n{cue.text}\n")
     return "\n".join(out)
+
+
+def dedupe_rolling(cues):
+    """A legenda automatica do YouTube repete a linha anterior em cada cue (pra rolar na tela).
+    Fica so com o texto que cada cue acrescenta."""
+    out = []
+    previous_lines = []
+    for cue in cues:
+        lines = [l for l in cue.text.split("\n") if l.strip()]
+        new_lines = [l for l in lines if l not in previous_lines]
+        previous_lines = lines
+        if not new_lines:
+            continue
+        out.append(cue.copy(text=" ".join(new_lines)))
+    return out
+
+
+def normalize(cues):
+    """A limpeza toda que a legenda automatica precisa antes de ir pro tradutor."""
+    cues = dedupe_rolling(cues)
+    return [c.copy(text=c.text.replace(DEVANAGARI_DANDA, ".")) for c in cues]
