@@ -2,7 +2,9 @@
 
 O YouTube entrega a legenda como WebVTT (o ``youtube-dl --sub-format vtt``).
 A automatica vem com cada linha repetida no cue seguinte (o "rolling caption",
-que rola na tela) e com uma tag de tempo por palavra. ``dedupe_rolling`` tira isso.
+que rola na tela) e com uma tag de tempo por palavra. ``dedupe_rolling`` tira isso,
+``merge_short`` junta os pedacinhos em frases e ``fix_overlaps`` garante que cada
+legenda fique na tela tempo suficiente pra ler.
 """
 import re
 
@@ -133,7 +135,38 @@ def dedupe_rolling(cues):
     return out
 
 
+def merge_short(cues, max_chars=84, max_gap=0.7, max_duration=7.0):
+    """Junta fragmentos consecutivos em legendas do tamanho de uma frase, parando em
+    pontuacao de fim de frase, pausa longa ou quando a legenda ficaria comprida demais."""
+    out = []
+    for cue in cues:
+        if out:
+            last = out[-1]
+            joined = f"{last.text} {cue.text}"
+            ends_sentence = last.text.rstrip().endswith((".", "!", "?", DEVANAGARI_DANDA))
+            if (not ends_sentence and cue.start - last.end <= max_gap and len(joined) <= max_chars
+                    and cue.end - last.start <= max_duration):
+                out[-1] = last.copy(end=max(last.end, cue.end), text=joined)
+                continue
+        out.append(cue.copy())
+    return out
+
+
+def fix_overlaps(cues, min_duration=0.8):
+    """Garante que as legendas nao se sobreponham e que cada uma fique na tela o bastante pra ler."""
+    out = [c.copy() for c in cues]
+    for k, cue in enumerate(out):
+        if k + 1 < len(out) and cue.end > out[k + 1].start:
+            cue.end = out[k + 1].start
+        if cue.end - cue.start < min_duration:
+            limit = out[k + 1].start if k + 1 < len(out) else cue.start + min_duration
+            cue.end = max(cue.end, min(cue.start + min_duration, limit))
+    return out
+
+
 def normalize(cues):
     """A limpeza toda que a legenda automatica precisa antes de ir pro tradutor."""
     cues = dedupe_rolling(cues)
-    return [c.copy(text=c.text.replace(DEVANAGARI_DANDA, ".")) for c in cues]
+    cues = [c.copy(text=c.text.replace(DEVANAGARI_DANDA, ".")) for c in cues]
+    cues = merge_short(cues)
+    return fix_overlaps(cues)

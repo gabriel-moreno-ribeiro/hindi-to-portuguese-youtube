@@ -48,5 +48,29 @@ def test_rolling_captions_are_deduplicated():
     flat = S.dedupe_rolling(cues)
     assert [c.text for c in flat] == ["आज हम बात करेंगे", "एक बहुत खास चीज़ के बारे में।", "चलिए शुरू करते हैं", "यह वीडियो के अंत तक देखिए"]
     normal = S.normalize(cues)
-    assert normal[1].text.endswith("."), "o danda vira ponto"
-    assert len(normal) == 4
+    texts = [c.text for c in normal]
+    assert texts[0] == "आज हम बात करेंगे एक बहुत खास चीज़ के बारे में."
+    assert len(normal) == 2, texts
+    for a, b in zip(normal, normal[1:]):
+        assert a.end <= b.start
+    assert all(c.duration >= 0.8 for c in normal)
+
+
+def test_merge_respects_limits():
+    cues = [S.Cue(0, 1, "a" * 60), S.Cue(1.2, 2, "b" * 60)]
+    assert len(S.merge_short(cues)) == 2, "comprido demais pra juntar"
+    cues = [S.Cue(0, 1, "hello"), S.Cue(5, 6, "world")]
+    assert len(S.merge_short(cues)) == 2, "pausa longa"
+    cues = [S.Cue(0, 1, "end."), S.Cue(1.1, 2, "next")]
+    assert len(S.merge_short(cues)) == 2, "fim de frase"
+    cues = [S.Cue(0, 1, "one"), S.Cue(1.1, 2, "two")]
+    assert S.merge_short(cues)[0].text == "one two"
+
+
+def test_fix_overlaps_and_minimum_duration():
+    cues = [S.Cue(0, 2.5, "a"), S.Cue(2.0, 2.3, "b"), S.Cue(2.4, 9, "c")]
+    fixed = S.fix_overlaps(cues)
+    assert fixed[0].end == 2.0, "a primeira para onde a segunda comeca"
+    assert fixed[1].end == 2.4, "a segunda estica ate onde da (a proxima comeca em 2.4)"
+    assert fixed[2].end == 9
+    assert S.fix_overlaps([S.Cue(0, 0.1, "x")])[0].end == 0.8
