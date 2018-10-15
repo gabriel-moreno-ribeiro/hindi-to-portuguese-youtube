@@ -3,6 +3,8 @@
     hindi2pt "https://www.youtube.com/watch?v=XXXX" -o saida/ -b google --key ...
     hindi2pt video.hi.vtt -b googletrans           # ou um arquivo local, com o tradutor de graca
     hindi2pt video.hi.srt --raw                    # legenda feita a mao: nao precisa de limpeza
+
+Tudo que ja foi traduzido fica em saida/.cache.json, entao rodar de novo e de graca.
 """
 import argparse
 import os
@@ -41,9 +43,11 @@ def main(argv=None):
     p.add_argument("--key", default=os.environ.get("GOOGLE_TRANSLATE_KEY"), help="chave da API do Google Cloud Translation")
     p.add_argument("--batch", type=int, default=40, help="linhas por pedido de traducao")
     p.add_argument("--raw", action="store_true", help="nao limpa a legenda (pra legenda feita a mao)")
+    p.add_argument("--no-cache", action="store_true", help="ignora o .cache.json")
     args = p.parse_args(argv)
     try:
-        translator = Translator(make_backend(args.backend, args.key), batch_size=args.batch)
+        cache = None if args.no_cache else os.path.join(args.out, ".cache.json")
+        translator = Translator(make_backend(args.backend, args.key), cache, batch_size=args.batch)
         source = fetch_subtitles(args.source, args.out) if is_url(args.source) else args.source
         translate_file(source, translator, args.out, raw=args.raw)
     except (RuntimeError, ValueError, OSError) as e:

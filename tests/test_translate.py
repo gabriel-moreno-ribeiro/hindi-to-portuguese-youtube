@@ -1,3 +1,4 @@
+import json
 import os
 
 import pytest
@@ -17,6 +18,24 @@ def test_translator_batches_in_order():
     assert backend.calls == 3 and seen == [(2, 5), (4, 5), (5, 5)]
 
 
+def test_translator_caches_and_retries(tmpdir):
+    cache = os.path.join(str(tmpdir), "cache.json")
+    backend = DummyBackend(fail_first=1)
+    sleeps = []
+    t = Translator(backend, cache, batch_size=3, sleep=sleeps.append)
+    out = t.translate(["a", "b", "c", "d", "e"])
+    assert out == ["[pt] a", "[pt] b", "[pt] c", "[pt] d", "[pt] e"]
+    assert backend.calls == 3 and sleeps == [1.5]
+    with open(cache, encoding="utf-8") as f:
+        assert len(json.load(f)) == 5
+    # segunda vez: tudo vem do cache, o backend nem e chamado pras linhas repetidas
+    t2 = Translator(DummyBackend(), cache)
+    assert t2.translate(["a", "e", "f"]) == ["[pt] a", "[pt] e", "[pt] f"]
+    assert t2.backend.calls == 1
+    with pytest.raises(RuntimeError):
+        Translator(DummyBackend(fail_first=9), None, retries=2, sleep=lambda _: None).translate(["x"])
+
+
 def test_translator_rejects_a_backend_that_loses_lines():
     class Lossy(object):
         name = "lossy"
@@ -25,7 +44,7 @@ def test_translator_rejects_a_backend_that_loses_lines():
             return lines[:-1]
 
     with pytest.raises(RuntimeError):
-        Translator(Lossy()).translate(["a", "b"])
+        Translator(Lossy(), retries=1, sleep=lambda _: None).translate(["a", "b"])
 
 
 def test_google_cloud_backend_speaks_the_v2_api():
@@ -58,7 +77,8 @@ def test_cli_translates_a_local_file(tmpdir, capsys):
     assert "6 cues viraram 2" in out and "pronto: 2 legendas" in out
     with open(os.path.join(str(tmpdir), "sample.pt-BR.srt"), encoding="utf-8") as f:
         assert f.read().count("[pt]") == 2
-    assert main([os.path.join(FIXTURES, "sample.hi.vtt"), "-o", str(tmpdir), "-b", "dummy", "--raw"]) == 0
+    assert os.path.exists(os.path.join(str(tmpdir), ".cache.json"))
+    assert main([os.path.join(FIXTURES, "sample.hi.vtt"), "-o", str(tmpdir), "-b", "dummy", "--raw", "--no-cache"]) == 0
     assert "pronto: 6 legendas" in capsys.readouterr().out
     assert main([os.path.join(FIXTURES, "sample.hi.vtt"), "-o", str(tmpdir), "-b", "nope"]) == 1
     assert "desconhecido" in capsys.readouterr().err
