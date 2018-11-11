@@ -4,7 +4,8 @@ O YouTube entrega a legenda como WebVTT (o ``youtube-dl --sub-format vtt``).
 A automatica vem com cada linha repetida no cue seguinte (o "rolling caption",
 que rola na tela) e com uma tag de tempo por palavra. ``dedupe_rolling`` tira isso,
 ``merge_short`` junta os pedacinhos em frases e ``fix_overlaps`` garante que cada
-legenda fique na tela tempo suficiente pra ler.
+legenda fique na tela tempo suficiente pra ler. Depois de traduzir, ``wrap`` quebra
+em duas linhas e ``fit_reading_speed`` estica o que ficou rapido demais pra ler.
 """
 import re
 
@@ -170,3 +171,40 @@ def normalize(cues):
     cues = [c.copy(text=c.text.replace(DEVANAGARI_DANDA, ".")) for c in cues]
     cues = merge_short(cues)
     return fix_overlaps(cues)
+
+
+def wrap(text, width=42):
+    """Quebra uma linha traduzida em no maximo duas linhas equilibradas pra tela."""
+    text = " ".join(text.split())
+    if len(text) <= width:
+        return text
+    words = text.split(" ")
+    best, best_diff = None, None
+    for cut in range(1, len(words)):
+        a, b = " ".join(words[:cut]), " ".join(words[cut:])
+        diff = abs(len(a) - len(b))
+        if best is None or diff < best_diff:
+            best, best_diff = (a, b), diff
+    return "\n".join(best) if best else text
+
+
+def chars_per_second(cue):
+    text = cue.text.replace("\n", " ")
+    return len(text) / cue.duration if cue.duration > 0 else float("inf")
+
+
+def fit_reading_speed(cues, max_cps=20.0, min_gap=0.1):
+    """Portugues e mais comprido que hindi: uma legenda que cabia em 1 s pode virar
+    60 caracteres. Acima de ``max_cps`` caracteres por segundo, estica o fim ate
+    onde a proxima legenda deixa. O que nao couber, paciencia (fica marcado no log)."""
+    out = [c.copy() for c in cues]
+    too_fast = []
+    for k, cue in enumerate(out):
+        if chars_per_second(cue) <= max_cps:
+            continue
+        needed = cue.start + len(cue.text.replace("\n", " ")) / max_cps
+        limit = out[k + 1].start - min_gap if k + 1 < len(out) else needed
+        cue.end = max(cue.end, min(needed, limit))
+        if chars_per_second(cue) > max_cps:
+            too_fast.append(k)
+    return out, too_fast

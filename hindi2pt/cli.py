@@ -16,7 +16,7 @@ from .fetch import fetch_subtitles, is_url
 from .translate import Translator, make_backend
 
 
-def translate_file(source, translator, out_dir, log=print, raw=False):
+def translate_file(source, translator, out_dir, log=print, raw=False, max_cps=20.0):
     with open(source, encoding="utf-8") as f:
         cues = subtitles.parse(f.read())
     if not raw:
@@ -25,7 +25,10 @@ def translate_file(source, translator, out_dir, log=print, raw=False):
         log(f"limpeza: {before} cues viraram {len(cues)}")
     log(f"{len(cues)} legendas pra traduzir com {translator.backend.name}")
     texts = translator.translate([c.text for c in cues], progress=lambda d, t: log(f"  {d}/{t}"))
-    translated = [c.copy(text=t) for c, t in zip(cues, texts)]
+    translated = [c.copy(text=subtitles.wrap(t)) for c, t in zip(cues, texts)]
+    translated, too_fast = subtitles.fit_reading_speed(translated, max_cps=max_cps)
+    for k in too_fast:
+        log(f"  aviso: legenda {k + 1} ({subtitles.format_time(translated[k].start)}) passa rapido demais pra ler")
     stem = re.sub(r"\.(hi|hi-[\w-]+)$", "", os.path.splitext(os.path.basename(source))[0])
     out = os.path.join(out_dir, stem + ".pt-BR.srt")
     os.makedirs(out_dir, exist_ok=True)
@@ -44,12 +47,13 @@ def main(argv=None):
     p.add_argument("--batch", type=int, default=40, help="linhas por pedido de traducao")
     p.add_argument("--raw", action="store_true", help="nao limpa a legenda (pra legenda feita a mao)")
     p.add_argument("--no-cache", action="store_true", help="ignora o .cache.json")
+    p.add_argument("--max-cps", type=float, default=20, help="caracteres por segundo que da pra ler (padrao 20)")
     args = p.parse_args(argv)
     try:
         cache = None if args.no_cache else os.path.join(args.out, ".cache.json")
         translator = Translator(make_backend(args.backend, args.key), cache, batch_size=args.batch)
         source = fetch_subtitles(args.source, args.out) if is_url(args.source) else args.source
-        translate_file(source, translator, args.out, raw=args.raw)
+        translate_file(source, translator, args.out, raw=args.raw, max_cps=args.max_cps)
     except (RuntimeError, ValueError, OSError) as e:
         print(f"erro: {e}", file=sys.stderr)
         return 1

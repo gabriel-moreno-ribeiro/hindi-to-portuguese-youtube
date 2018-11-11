@@ -74,3 +74,22 @@ def test_fix_overlaps_and_minimum_duration():
     assert fixed[1].end == 2.4, "a segunda estica ate onde da (a proxima comeca em 2.4)"
     assert fixed[2].end == 9
     assert S.fix_overlaps([S.Cue(0, 0.1, "x")])[0].end == 0.8
+
+
+def test_wrap_balances_two_lines():
+    assert S.wrap("curta") == "curta"
+    long = "esta é uma frase bem comprida que não cabe em uma linha só da tela"
+    lines = S.wrap(long).split("\n")
+    assert len(lines) == 2 and abs(len(lines[0]) - len(lines[1])) <= 12
+    assert " ".join(lines) == long
+
+
+def test_reading_speed_stretches_fast_cues():
+    cues = [S.Cue(0, 1, "x" * 40), S.Cue(3, 4, "y" * 40), S.Cue(4.2, 5, "z" * 10), S.Cue(10, 11, "w" * 100)]
+    fixed, too_fast = S.fit_reading_speed(cues, max_cps=20)
+    assert fixed[0].end == 2.0, "40 caracteres precisam de 2 s"
+    assert fixed[1].end == pytest.approx(4.1), "so pode ir ate 0.1 s antes da proxima"
+    assert fixed[2].end == 5, "ja estava lento o bastante"
+    assert fixed[3].end == 15.0
+    assert too_fast == [1]
+    assert S.chars_per_second(S.Cue(0, 0, "ab")) == float("inf")
