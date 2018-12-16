@@ -3,6 +3,7 @@
     hindi2pt "https://www.youtube.com/watch?v=XXXX" -o saida/ -b google --key ...
     hindi2pt video.hi.vtt -b googletrans           # ou um arquivo local, com o tradutor de graca
     hindi2pt video.hi.srt --raw                    # legenda feita a mao: nao precisa de limpeza
+    hindi2pt URL --glossary nomes.txt              # termos que o tradutor nao pode inventar
 
 Tudo que ja foi traduzido fica em saida/.cache.json, entao rodar de novo e de graca.
 """
@@ -13,6 +14,7 @@ import sys
 
 from . import subtitles
 from .fetch import fetch_subtitles, is_url
+from .glossary import Glossary, GlossaryBackend
 from .translate import Translator, make_backend
 
 
@@ -38,20 +40,30 @@ def translate_file(source, translator, out_dir, log=print, raw=False, max_cps=20
     return out
 
 
+def build_translator(args, log=print):
+    backend = make_backend(args.backend, args.key)
+    if args.glossary:
+        glossary = Glossary.load(args.glossary)
+        log(f"glossario: {len(glossary)} termo(s)")
+        backend = GlossaryBackend(backend, glossary)
+    cache = None if args.no_cache else os.path.join(args.out, ".cache.json")
+    return Translator(backend, cache, batch_size=args.batch)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="hindi2pt", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("source", help="URL do YouTube ou um arquivo .srt/.vtt")
     p.add_argument("-o", "--out", default="out", help="pasta de saida (padrao: out/)")
     p.add_argument("-b", "--backend", default="googletrans", help="google (com chave), googletrans (de graca) ou dummy")
     p.add_argument("--key", default=os.environ.get("GOOGLE_TRANSLATE_KEY"), help="chave da API do Google Cloud Translation")
+    p.add_argument("--glossary", help="arquivo com 'termo = traducao' por linha")
     p.add_argument("--batch", type=int, default=40, help="linhas por pedido de traducao")
     p.add_argument("--raw", action="store_true", help="nao limpa a legenda (pra legenda feita a mao)")
     p.add_argument("--no-cache", action="store_true", help="ignora o .cache.json")
     p.add_argument("--max-cps", type=float, default=20, help="caracteres por segundo que da pra ler (padrao 20)")
     args = p.parse_args(argv)
     try:
-        cache = None if args.no_cache else os.path.join(args.out, ".cache.json")
-        translator = Translator(make_backend(args.backend, args.key), cache, batch_size=args.batch)
+        translator = build_translator(args)
         source = fetch_subtitles(args.source, args.out) if is_url(args.source) else args.source
         translate_file(source, translator, args.out, raw=args.raw, max_cps=args.max_cps)
     except (RuntimeError, ValueError, OSError) as e:
