@@ -6,6 +6,7 @@
     hindi2pt URL --glossary nomes.txt              # termos que o tradutor nao pode inventar
     hindi2pt URL --dub                             # e uma dublagem em voz sintetica (gTTS + ffmpeg)
     hindi2pt URL --dub --burn video.mp4            # queima legenda e voz num video novo
+    hindi2pt "https://www.youtube.com/playlist?list=..." --limit 20    # a playlist inteira (ou um canal)
 
 Tudo que ja foi traduzido fica em saida/.cache.json, entao rodar de novo e de graca.
 """
@@ -16,7 +17,7 @@ import sys
 
 from . import subtitles
 from .dub import burn, dub
-from .fetch import fetch_subtitles, is_url
+from .fetch import fetch_subtitles, is_playlist, is_url, list_videos
 from .glossary import Glossary, GlossaryBackend
 from .translate import Translator, make_backend
 
@@ -56,21 +57,40 @@ def build_translator(args, log=print):
     return Translator(backend, cache, batch_size=args.batch)
 
 
-def run(args, log=print):
-    translator = build_translator(args, log)
-    source = fetch_subtitles(args.source, args.out, log=log) if is_url(args.source) else args.source
-    srt = translate_file(source, translator, args.out, log=log, raw=args.raw, max_cps=args.max_cps)
+def run_one(source, args, translator, log=print):
+    path = fetch_subtitles(source, args.out, log=log) if is_url(source) else source
+    srt = translate_file(path, translator, args.out, log=log, raw=args.raw, max_cps=args.max_cps)
     audio = None
     if args.dub:
-        audio = dub(srt, os.path.join(args.out, stem_of(source) + ".pt-BR.mp3"), log=log)
+        audio = dub(srt, os.path.join(args.out, stem_of(path) + ".pt-BR.mp3"), log=log)
     if args.burn:
-        burn(args.burn, srt, os.path.join(args.out, stem_of(source) + ".pt-BR.mp4"), audio, log=log)
+        burn(args.burn, srt, os.path.join(args.out, stem_of(path) + ".pt-BR.mp4"), audio, log=log)
     return srt
+
+
+def run(args, log=print):
+    translator = build_translator(args, log)
+    if is_url(args.source) and is_playlist(args.source):
+        videos = list_videos(args.source, limit=args.limit)
+        log(f"playlist: {len(videos)} video(s)")
+        done, failed = [], []
+        for n, url in enumerate(videos, 1):
+            log(f"[{n}/{len(videos)}] {url}")
+            try:
+                done.append(run_one(url, args, translator, log))
+            except (RuntimeError, ValueError, OSError) as e:
+                log(f"  pulei: {e}")
+                failed.append(url)
+        log(f"playlist: {len(done)} traduzido(s), {len(failed)} pulado(s)")
+        if not done:
+            raise RuntimeError("nenhum video da playlist deu certo")
+        return done
+    return [run_one(args.source, args, translator, log)]
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(prog="hindi2pt", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("source", help="URL do YouTube ou um arquivo .srt/.vtt")
+    p.add_argument("source", help="URL do YouTube (video, playlist ou canal) ou um arquivo .srt/.vtt")
     p.add_argument("-o", "--out", default="out", help="pasta de saida (padrao: out/)")
     p.add_argument("-b", "--backend", default="googletrans", help="google (com chave), googletrans (de graca) ou dummy")
     p.add_argument("--key", default=os.environ.get("GOOGLE_TRANSLATE_KEY"), help="chave da API do Google Cloud Translation")
@@ -81,6 +101,7 @@ def main(argv=None):
     p.add_argument("--max-cps", type=float, default=20, help="caracteres por segundo que da pra ler (padrao 20)")
     p.add_argument("--dub", action="store_true", help="gera tambem a dublagem em pt-BR (gTTS + ffmpeg)")
     p.add_argument("--burn", metavar="VIDEO", help="queima a legenda (e a dublagem) nesse arquivo de video")
+    p.add_argument("--limit", type=int, help="numa playlist, so os N primeiros videos")
     args = p.parse_args(argv)
     try:
         run(args)
