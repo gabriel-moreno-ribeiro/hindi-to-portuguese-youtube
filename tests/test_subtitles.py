@@ -93,3 +93,15 @@ def test_reading_speed_stretches_fast_cues():
     assert fixed[3].end == 15.0
     assert too_fast == [1]
     assert S.chars_per_second(S.Cue(0, 0, "ab")) == float("inf")
+
+
+def test_shift_scale_and_bilingual():
+    cues = [S.Cue(1, 2, "a"), S.Cue(3, 4, "b")]
+    assert S.shift(cues, 0.5) == [S.Cue(1.5, 2.5, "a"), S.Cue(3.5, 4.5, "b")]
+    assert S.shift(cues, -1.5)[0] == S.Cue(0, 0.5, "a")
+    assert S.scale(cues, 2) == [S.Cue(2, 4, "a"), S.Cue(6, 8, "b")]
+    with pytest.raises(ValueError):
+        S.scale(cues, 0)
+    both = S.bilingual([S.Cue(1, 2, "ola"), S.Cue(3, 4, "tchau")], [S.Cue(1, 2, "नमस्ते"), S.Cue(3, 4, "अलविदा")])
+    assert both[0].text == "ola" + chr(10) + "<i>नमस्ते</i>"
+    assert S.parse(S.to_srt(both))[1].text == "tchau" + chr(10) + "अलविदा", "as tags saem no parse"

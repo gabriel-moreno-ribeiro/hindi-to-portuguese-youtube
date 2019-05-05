@@ -6,6 +6,8 @@ que rola na tela) e com uma tag de tempo por palavra. ``dedupe_rolling`` tira is
 ``merge_short`` junta os pedacinhos em frases e ``fix_overlaps`` garante que cada
 legenda fique na tela tempo suficiente pra ler. Depois de traduzir, ``wrap`` quebra
 em duas linhas e ``fit_reading_speed`` estica o que ficou rapido demais pra ler.
+``shift``/``scale`` ajustam o tempo quando a legenda do YouTube esta fora de sincronia
+com o arquivo de video que voce tem, e ``bilingual`` poe o hindi embaixo do portugues.
 """
 import re
 
@@ -208,3 +210,24 @@ def fit_reading_speed(cues, max_cps=20.0, min_gap=0.1):
         if chars_per_second(cue) > max_cps:
             too_fast.append(k)
     return out, too_fast
+
+
+def shift(cues, offset_s):
+    """Desloca tudo no tempo (positivo = atrasa). Nada fica antes de zero."""
+    return [c.copy(start=max(0.0, c.start + offset_s), end=max(0.0, c.end + offset_s)) for c in cues]
+
+
+def scale(cues, factor):
+    """Multiplica os tempos: pra quando o video foi convertido de 25 pra 23.976 fps, por exemplo."""
+    if factor <= 0:
+        raise ValueError("o fator de escala tem que ser positivo")
+    return [c.copy(start=c.start * factor, end=c.end * factor) for c in cues]
+
+
+def bilingual(translated, original):
+    """Portugues em cima, hindi (em italico) embaixo. Bom pra quem esta aprendendo."""
+    out = []
+    for pt, hi in zip(translated, original):
+        hi_text = hi.text.replace(chr(10), " ")
+        out.append(pt.copy(text=pt.text + chr(10) + "<i>" + hi_text + "</i>"))
+    return out
