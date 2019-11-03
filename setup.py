@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="hindi2pt",
-    version="0.5.0",
+    version="1.0.0",
     description="Traduz a legenda em hindi de um video do YouTube pra portugues do Brasil, e dubla se quiser",
     author="Gabriel Moreno Ribeiro",
     license="MIT",
