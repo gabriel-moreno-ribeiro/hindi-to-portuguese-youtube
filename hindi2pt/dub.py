@@ -1,9 +1,10 @@
-"""Dublagem: fala cada legenda com o gTTS (a voz do Google Translate, de graca) e monta
-uma trilha de audio com cada fala no tempo certo. O ffmpeg faz o trabalho pesado:
-acelera a fala que nao coube no tempo da legenda (atempo), soma tudo numa trilha
-silenciosa (adelay + amix) e, se quiser, queima a legenda e a voz no video.
+"""Dublagem: fala cada legenda com uma voz sintetica e monta uma trilha de audio com cada
+fala no tempo certo. O ffmpeg faz o trabalho pesado: acelera a fala que nao coube no
+tempo da legenda (atempo), soma tudo numa trilha silenciosa (adelay + amix) e, se
+quiser, queima a legenda e a voz no video.
 
-Nao vai ganhar premio. Mas da pra assistir a receita enquanto cozinha, sem ler.
+Vozes: ``gtts`` (a do Google Translate, a original de 2019) e ``edge`` (as vozes neurais
+do Edge, via edge-tts; bem mais natural, e a que eu uso desde 2026).
 """
 import os
 import shutil
@@ -25,9 +26,21 @@ def audio_duration(path, run=subprocess.run):
         return 0.0
 
 
-def speak(text, path):  # pragma: no cover - rede
+def speak_gtts(text, path):  # pragma: no cover - rede
     from gtts import gTTS
     gTTS(text=text, lang="pt", tld="com.br").save(path)
+
+
+def speak_edge(text, path, voice="pt-BR-AntonioNeural"):  # pragma: no cover - rede
+    import asyncio
+    try:
+        import edge_tts
+    except ImportError:
+        raise RuntimeError("pip install edge-tts pra usar as vozes do Edge (ou --voice gtts)")
+    asyncio.run(edge_tts.Communicate(text, voice).save(path))
+
+
+VOICES = {"gtts": speak_gtts, "edge": speak_edge}
 
 
 def fit_clip(src, dst, max_seconds, run=subprocess.run):
@@ -42,7 +55,7 @@ def fit_clip(src, dst, max_seconds, run=subprocess.run):
     return factor
 
 
-def dub(srt_path, out_path, log=print, speak=speak, run=subprocess.run, which=shutil.which):
+def dub(srt_path, out_path, log=print, speak=speak_gtts, run=subprocess.run, which=shutil.which):
     """Gera um .mp3 com a dublagem inteira, alinhada com a legenda."""
     if not ffmpeg_available(which):
         raise RuntimeError("a dublagem precisa do ffmpeg e do ffprobe no PATH")

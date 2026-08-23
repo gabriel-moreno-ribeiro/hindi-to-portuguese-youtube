@@ -1,10 +1,12 @@
 """hindi2pt: pega a legenda em hindi de um video do YouTube, traduz pra pt-BR e salva como SRT.
 
-    hindi2pt "https://www.youtube.com/watch?v=XXXX" -o saida/ -b google --key ...
-    hindi2pt video.hi.vtt -b googletrans           # ou um arquivo local, com o tradutor de graca
+    hindi2pt "https://www.youtube.com/watch?v=XXXX" -o saida/           # argos: offline, sem chave
+    hindi2pt URL -b anthropic                      # ou openai: traducao muito melhor, precisa da chave no ambiente
+    hindi2pt URL --audio                           # video sem legenda: baixa o audio e transcreve com whisper
+    hindi2pt video.hi.vtt -b google --key ...      # ou um arquivo local, com a API do Google (a de 2018)
     hindi2pt video.hi.srt --raw                    # legenda feita a mao: nao precisa de limpeza
     hindi2pt URL --glossary nomes.txt              # termos que o tradutor nao pode inventar
-    hindi2pt URL --dub                             # e uma dublagem em voz sintetica (gTTS + ffmpeg)
+    hindi2pt URL --dub --voice edge                # dublagem (vozes do Edge; --voice gtts e a de 2019)
     hindi2pt URL --dub --burn video.mp4            # queima legenda e voz num video novo
     hindi2pt "https://www.youtube.com/playlist?list=..." --limit 20    # a playlist inteira (ou um canal)
     hindi2pt URL --bilingual --offset -1.5         # hindi embaixo do portugues, tudo 1.5 s mais cedo
@@ -19,11 +21,11 @@ import re
 import sys
 
 from . import subtitles
-from .dub import burn, dub
-from .fetch import fetch_subtitles, is_playlist, is_url, list_videos
+from .dub import VOICES, burn, dub
+from .fetch import fetch_subtitles, is_playlist, is_url, list_videos, transcribe
 from .glossary import Glossary, GlossaryBackend
 from .review import export_tsv, import_tsv
-from .translate import Translator, make_backend
+from .translate import BACKENDS, Translator, make_backend
 
 
 def stem_of(source):
@@ -84,7 +86,10 @@ def build_translator(args, log=print):
 
 
 def run_one(source, args, translator, log=print):
-    path = fetch_subtitles(source, args.out, log=log) if is_url(source) else source
+    if is_url(source):
+        path = transcribe(source, args.out, log=log) if args.audio else fetch_subtitles(source, args.out, log=log)
+    else:
+        path = source
     if args.apply_review:
         srt = apply_review(path, args.apply_review, args.out, log=log)
     else:
@@ -92,7 +97,7 @@ def run_one(source, args, translator, log=print):
                              offset=args.offset, factor=args.scale, bilingual=args.bilingual, review=args.review)
     audio = None
     if args.dub:
-        audio = dub(srt, os.path.join(args.out, stem_of(path) + ".pt-BR.mp3"), log=log)
+        audio = dub(srt, os.path.join(args.out, stem_of(path) + ".pt-BR.mp3"), log=log, speak=VOICES[args.voice])
     if args.burn:
         burn(args.burn, srt, os.path.join(args.out, stem_of(path) + ".pt-BR.mp4"), audio, log=log)
     return srt
@@ -122,8 +127,9 @@ def main(argv=None):
     p = argparse.ArgumentParser(prog="hindi2pt", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("source", help="URL do YouTube (video, playlist ou canal) ou um arquivo .srt/.vtt")
     p.add_argument("-o", "--out", default="out", help="pasta de saida (padrao: out/)")
-    p.add_argument("-b", "--backend", default="googletrans", help="google (com chave), googletrans (de graca) ou dummy")
-    p.add_argument("--key", default=os.environ.get("GOOGLE_TRANSLATE_KEY"), help="chave da API do Google Cloud Translation")
+    p.add_argument("-b", "--backend", default="argos", help=", ".join(BACKENDS))
+    p.add_argument("--key", default=os.environ.get("GOOGLE_TRANSLATE_KEY"), help="chave da API do Google Cloud Translation (-b google)")
+    p.add_argument("--audio", action="store_true", help="sem legenda? baixa o audio e transcreve com o whisper")
     p.add_argument("--glossary", help="arquivo com 'termo = traducao' por linha")
     p.add_argument("--batch", type=int, default=40, help="linhas por pedido de traducao")
     p.add_argument("--raw", action="store_true", help="nao limpa a legenda (pra legenda feita a mao)")
@@ -134,7 +140,8 @@ def main(argv=None):
     p.add_argument("--bilingual", action="store_true", help="hindi em italico embaixo do portugues")
     p.add_argument("--review", metavar="TSV", help="exporta uma tabela hindi/portugues pra revisar")
     p.add_argument("--apply-review", metavar="TSV", help="gera o SRT a partir da tabela revisada (nao traduz de novo)")
-    p.add_argument("--dub", action="store_true", help="gera tambem a dublagem em pt-BR (gTTS + ffmpeg)")
+    p.add_argument("--dub", action="store_true", help="gera tambem a dublagem em pt-BR")
+    p.add_argument("--voice", default="edge", choices=sorted(VOICES), help="voz da dublagem: edge (2026) ou gtts (2019)")
     p.add_argument("--burn", metavar="VIDEO", help="queima a legenda (e a dublagem) nesse arquivo de video")
     p.add_argument("--limit", type=int, help="numa playlist, so os N primeiros videos")
     args = p.parse_args(argv)

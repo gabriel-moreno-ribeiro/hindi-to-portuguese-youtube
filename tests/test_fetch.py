@@ -20,6 +20,7 @@ def test_video_id():
 
 
 def test_fetch_calls_youtube_dl_and_finds_the_file(tmpdir):
+    # 2026: com o yt-dlp instalado, o caminho antigo so roda quando a gente forca (ytdlp=None)
     calls = []
 
     def fake_run(cmd, **kw):
@@ -28,7 +29,7 @@ def test_fetch_calls_youtube_dl_and_finds_the_file(tmpdir):
             f.write("WEBVTT\n\n00:01.000 --> 00:02.000\nx\n")
         return subprocess.CompletedProcess(cmd, 0, b"", b"")
 
-    path = fetch_subtitles("https://youtu.be/abc123xyz", str(tmpdir), log=lambda _: None, run=fake_run)
+    path = fetch_subtitles("https://youtu.be/abc123xyz", str(tmpdir), log=lambda _: None, run=fake_run, ytdlp=lambda: None)
     assert path.endswith("abc123xyz.hi.vtt")
     assert calls[0][0] == "youtube-dl" and "--write-auto-sub" in calls[0] and calls[0][-1] == "https://youtu.be/abc123xyz"
 
@@ -36,19 +37,19 @@ def test_fetch_calls_youtube_dl_and_finds_the_file(tmpdir):
         return subprocess.CompletedProcess(cmd, 1, b"", b"ERROR: video unavailable")
 
     with pytest.raises(RuntimeError):
-        fetch_subtitles("https://youtu.be/zzz999", str(tmpdir), run=failing)
+        fetch_subtitles("https://youtu.be/zzz999", str(tmpdir), run=failing, ytdlp=lambda: None)
 
     def no_subs(cmd, **kw):
         return subprocess.CompletedProcess(cmd, 0, b"", b"")
 
     with pytest.raises(RuntimeError):
-        fetch_subtitles("https://youtu.be/nosubs1", str(tmpdir), run=no_subs)
+        fetch_subtitles("https://youtu.be/nosubs1", str(tmpdir), run=no_subs, ytdlp=lambda: None)
 
     def missing(cmd, **kw):
         raise FileNotFoundError("youtube-dl")
 
     with pytest.raises(RuntimeError):
-        fetch_subtitles("https://youtu.be/nosubs1", str(tmpdir), run=missing)
+        fetch_subtitles("https://youtu.be/nosubs1", str(tmpdir), run=missing, ytdlp=lambda: None)
 
 
 def test_list_videos_reads_flat_playlist_json():
@@ -59,10 +60,10 @@ def test_list_videos_reads_flat_playlist_json():
         assert cmd[:2] == ["youtube-dl", "--playlist-end"] and cmd[2] == "2"
         return subprocess.CompletedProcess(cmd, 0, "\n".join(lines).encode("utf-8"), b"")
 
-    assert list_videos("https://www.youtube.com/playlist?list=PL1", run=fake_run, limit=2) == [
+    assert list_videos("https://www.youtube.com/playlist?list=PL1", run=fake_run, limit=2, ytdlp=lambda: None) == [
         "https://www.youtube.com/watch?v=aaa111bbb", "https://www.youtube.com/watch?v=ccc333ddd"]
     with pytest.raises(RuntimeError):
-        list_videos("https://www.youtube.com/playlist?list=PL1", run=lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, b"", b""))
+        list_videos("https://www.youtube.com/playlist?list=PL1", run=lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, b"", b""), ytdlp=lambda: None)
 
 
 def test_playlist_run_skips_broken_videos(tmpdir, capsys, monkeypatch):

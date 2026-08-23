@@ -1,21 +1,34 @@
 """Os tradutores. Cada backend traduz um lote de linhas; o ``Translator`` cuida de
 dividir em lotes, guardar o que ja foi traduzido num cache em disco e tentar de novo
-quando a rede falha (o googletrans falha bastante).
+quando a rede falha.
 
-- ``google``: a API paga do Google Cloud Translation (v2). Precisa de uma chave, mas
-  os primeiros 500 mil caracteres por mes sao de graca, o que da uns 50 videos.
+Os de 2018:
+- ``google``: a API paga do Google Cloud Translation (v2). Precisa de uma chave.
 - ``googletrans``: a biblioteca nao oficial que usa o site do Google Translate.
-  De graca, sem chave, e para de funcionar de vez em quando.
 - ``dummy``: sem rede; marca as linhas pra dar pra testar o resto.
+
+Os de 2026 (atualizacao):
+- ``argos``: offline e de graca, com o argostranslate (hindi -> ingles -> portugues
+  quando nao tem modelo direto). Mediano, mas nao depende de ninguem.
+- ``openai`` / ``anthropic``: um LLM recebe o lote inteiro com as linhas numeradas,
+  entao ve o contexto das frases vizinhas e da um portugues muito melhor.
 """
 import hashlib
 import json
 import os
+import re
 import time
 import urllib.parse
 import urllib.request
 
 GOOGLE_URL = "https://translation.googleapis.com/language/translate/v2"
+
+SYSTEM_PROMPT = (
+    "You translate Hindi subtitles from YouTube videos into natural Brazilian Portuguese. "
+    "Keep the meaning, the tone and the slang level; do not add explanations. "
+    "The input is a numbered list of lines; answer with the same numbers, one line each, "
+    "and nothing else."
+)
 
 
 class DummyBackend(object):
@@ -72,13 +85,121 @@ class GoogletransBackend(object):
         try:
             from googletrans import Translator
         except ImportError:
-            raise RuntimeError("pip install googletrans (ou use -b google com uma chave)")
+            raise RuntimeError("pip install googletrans (ou use -b argos, que e offline)")
         self._gt = Translator()
         self.source = source
         self.target = target
 
     def translate_batch(self, lines):  # pragma: no cover - rede
         return [self._gt.translate(line, src=self.source, dest=self.target).text for line in lines]
+
+
+class ArgosBackend(object):
+    """Traducao offline com o argostranslate; baixa os modelos na primeira vez."""
+
+    name = "argos"
+
+    def __init__(self, source="hi", target="pt"):
+        try:
+            import argostranslate.package
+            import argostranslate.translate
+        except ImportError:
+            raise RuntimeError("pip install argostranslate  (modelos offline, sem chave nenhuma)")
+        self._translate = argostranslate.translate
+        self._package = argostranslate.package
+        self.source, self.target = source, target
+        self.pivot = False
+        self._ensure_models()
+
+    def _ensure_models(self):  # pragma: no cover - rede
+        installed = {(p.from_code, p.to_code) for p in self._package.get_installed_packages()}
+        needed = [(self.source, self.target)]
+        if (self.source, self.target) not in installed:
+            needed = [(self.source, "en"), ("en", self.target)]
+            self.pivot = True
+        self._package.update_package_index()
+        available = self._package.get_available_packages()
+        for pair in needed:
+            if pair in installed:
+                continue
+            match = next((p for p in available if (p.from_code, p.to_code) == pair), None)
+            if match is None:
+                raise RuntimeError(f"nao tem modelo do argos pra {pair}")
+            self._package.install_from_path(match.download())
+
+    def translate_batch(self, lines):  # pragma: no cover - modelos
+        out = []
+        for line in lines:
+            if self.pivot:
+                text = self._translate.translate(line, self.source, "en")
+                text = self._translate.translate(text, "en", self.target)
+            else:
+                text = self._translate.translate(line, self.source, self.target)
+            out.append(text)
+        return out
+
+
+def _numbered(lines):
+    return "\n".join(f"{i + 1}. {line.replace(chr(10), ' ')}" for i, line in enumerate(lines))
+
+
+def parse_numbered(answer, expected):
+    """Le as linhas '1. ...' de volta; tolera numero faltando no fim."""
+    found = {}
+    for line in answer.splitlines():
+        m = re.match(r"\s*(\d+)\s*[.)\-:]\s*(.*)", line)
+        if m:
+            found[int(m.group(1))] = m.group(2).strip()
+    if len(found) < expected:
+        raise ValueError(f"o modelo devolveu {len(found)} de {expected} linhas")
+    return [found.get(i + 1, "") for i in range(expected)]
+
+
+class LlmBackend(object):
+    """O encanamento comum das APIs de chat: so a chamada HTTP muda."""
+
+    def __init__(self, call, name):
+        self._call = call
+        self.name = name
+
+    def translate_batch(self, lines):
+        answer = self._call(SYSTEM_PROMPT, _numbered(lines))
+        return parse_numbered(answer, len(lines))
+
+
+def openai_backend(model="gpt-4o-mini"):  # pragma: no cover - rede
+    key = os.environ.get("OPENAI_API_KEY")
+    if not key:
+        raise RuntimeError("defina OPENAI_API_KEY")
+
+    def call(system, user):
+        body = json.dumps({"model": model, "temperature": 0.2,
+                           "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}).encode()
+        req = urllib.request.Request("https://api.openai.com/v1/chat/completions", data=body,
+                                     headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return json.load(r)["choices"][0]["message"]["content"]
+
+    return LlmBackend(call, "openai")
+
+
+def anthropic_backend(model="claude-sonnet-5"):  # pragma: no cover - rede
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        raise RuntimeError("defina ANTHROPIC_API_KEY")
+
+    def call(system, user):
+        body = json.dumps({"model": model, "max_tokens": 4096, "system": system,
+                           "messages": [{"role": "user", "content": user}]}).encode()
+        req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body,
+                                     headers={"x-api-key": key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return "".join(part.get("text", "") for part in json.load(r)["content"])
+
+    return LlmBackend(call, "anthropic")
+
+
+BACKENDS = ("argos", "openai", "anthropic", "google", "googletrans", "dummy")
 
 
 def make_backend(name, key=None):
@@ -88,7 +209,13 @@ def make_backend(name, key=None):
         return GoogleCloudBackend(key)
     if name == "googletrans":
         return GoogletransBackend()
-    raise ValueError(f"backend desconhecido {name!r} (use google, googletrans ou dummy)")
+    if name == "argos":
+        return ArgosBackend()
+    if name == "openai":
+        return openai_backend()
+    if name == "anthropic":
+        return anthropic_backend()
+    raise ValueError(f"backend desconhecido {name!r} (use {', '.join(BACKENDS)})")
 
 
 class Translator(object):
